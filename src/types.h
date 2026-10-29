@@ -338,7 +338,7 @@ struct DirtyThreat {
 // Thus, 80 should work as an upper bound. Finally, 16 entries are added to accommodate
 // unmasked vector stores near the end of the list.
 
-using DirtyThreatList = ValueList<DirtyThreat, 96>;
+using DirtyThreatList = ValueList<DirtyThreat, 256>;
 
 struct DirtyThreats {
     DirtyThreatList list;

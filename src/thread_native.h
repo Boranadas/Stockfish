@@ -33,6 +33,10 @@
     #include "misc.h"
 #endif
 
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+    #define NO_NATIVE_THREADS
+#endif
+
 namespace Stockfish {
 
 struct NativeThreadOptions {

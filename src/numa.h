@@ -957,6 +957,10 @@ class NumaConfig {
 
     template<typename FuncT>
     void execute_on_numa_node(NumaIndex n, FuncT&& f) const {
+#ifdef NO_NATIVE_THREADS
+        (void) n;
+        std::forward<FuncT>(f)();
+#else
         NativeThread th = create_native_thread(NativeThreadOptions{}, [this, &f, n]() {
             bind_current_thread_to_numa_node(n);
             std::forward<FuncT>(f)();
@@ -969,6 +973,7 @@ class NumaConfig {
         }
 
         th.join();
+#endif
     }
 
     std::vector<std::set<CpuIndex>> nodes;

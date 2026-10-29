@@ -310,6 +310,11 @@ bool Search::Worker::iterative_deepening() {
             mainThread->iterValue.fill(mainThread->bestPreviousScore);
     }
 
+    tradeBias      = int(options["TradeBias"]) * 10000 / UCIEngine::to_cp(Value(10000), rootPos);
+    tradeBiasColor = rootPos.side_to_move();
+    for (Color c : {WHITE, BLACK})
+        trade_class_counts(rootPos, c, tradeBiasRootCounts[c]);
+
     usize multiPV = usize(options["MultiPV"]);
     Skill skill(options["Skill Level"], options["UCI_LimitStrength"] ? int(options["UCI_Elo"]) : 0);
 
@@ -636,8 +641,12 @@ void Search::Worker::do_move(Position& pos, const Move move, StateInfo& st, Stac
     do_move(pos, move, st, pos.gives_check(move), ss);
 }
 
-void Search::Worker::do_move(
-  Position& pos, const Move move, StateInfo& st, const bool givesCheck, Stack* const ss) {
+void Search::Worker::do_move(Position&    pos,
+                             const Move   move,
+                             StateInfo&   st,
+                             const bool   givesCheck,
+                             Stack* const ss,
+                             bool         recomputeCheckers) {
 
     // prefetch_key() does not model castling, en passant or promotion exactly.
     // The correction-history prefetches also approximate castling and promotion.
@@ -658,7 +667,7 @@ void Search::Worker::do_move(
     ++nodes;
 
     Dirties& dirties = accumulatorStack.push();
-    pos.do_move(move, st, givesCheck, dirties, &tt, &sharedHistory);
+    pos.do_move(move, st, givesCheck, dirties, &tt, &sharedHistory, recomputeCheckers);
 
     if (ss != nullptr)
     {
@@ -1305,7 +1314,7 @@ moves_loop:  // When in check, search starts here
         u64 nodeCount = rootNode ? u64(nodes) : 0;
 
         // Step 17. Make the move
-        do_move(pos, move, st, givesCheck, ss);
+        do_move(pos, move, st, givesCheck, ss, rootNode);
 
         // Add extension to new depth
         newDepth += extension;
@@ -1899,8 +1908,52 @@ TimePoint Search::Worker::elapsed() const {
 // Evaluate the current position of the game tree, from the point of view of
 // the side to move.
 Value Search::Worker::evaluate(const Position& pos) {
-    return Eval::evaluate(network[numaAccessToken], pos, accumulatorStack, refreshTable,
-                          optimism[pos.side_to_move()]);
+    Value v = Eval::evaluate(network[numaAccessToken], pos, accumulatorStack, refreshTable,
+                             optimism[pos.side_to_move()]);
+
+    if (tradeBias)
+    {
+        int bonus = trade_bonus(pos);
+        v += pos.side_to_move() == tradeBiasColor ? bonus : -bonus;
+        v = std::clamp(v, VALUE_TB_LOSS_IN_MAX_PLY + 1, VALUE_TB_WIN_IN_MAX_PLY - 1);
+    }
+
+    return v;
+}
+
+void Search::Worker::trade_class_counts(const Position& pos, Color c, int counts[4]) {
+    counts[0] = pos.count<PAWN>(c);
+    counts[1] = pos.count<KNIGHT>(c) + pos.count<BISHOP>(c);
+    counts[2] = pos.count<ROOK>(c);
+    counts[3] = pos.count<QUEEN>(c);
+}
+
+int Search::Worker::trade_bonus(const Position& pos) const {
+    int now[COLOR_NB][4];
+    trade_class_counts(pos, WHITE, now[WHITE]);
+    trade_class_counts(pos, BLACK, now[BLACK]);
+
+    int trades = 0;
+    for (int i = 0; i < 4; ++i)
+        trades += std::max(0, std::min(tradeBiasRootCounts[WHITE][i] - now[WHITE][i],
+                                       tradeBiasRootCounts[BLACK][i] - now[BLACK][i]));
+    return tradeBias * trades;
+}
+
+Value Search::Worker::remove_trade_bias(Value v, const std::vector<Move>& pv) {
+    if (!tradeBias || is_decisive(v))
+        return v;
+
+    std::vector<StateInfo> states(pv.size());
+    for (usize i = 0; i < pv.size(); ++i)
+        rootPos.do_move(pv[i], states[i]);
+
+    int bonus = trade_bonus(rootPos);
+
+    for (usize i = pv.size(); i > 0; --i)
+        rootPos.undo_move(pv[i - 1]);
+
+    return std::clamp(Value(v - bonus), VALUE_TB_LOSS_IN_MAX_PLY + 1, VALUE_TB_WIN_IN_MAX_PLY - 1);
 }
 
 namespace {
@@ -2296,6 +2349,10 @@ void SearchManager::output_pv(Search::Worker&           worker,
 
         bool isTBScore = worker.tbConfig.rootInTB && !is_mate_or_mated(v);
         v              = isTBScore ? rootMoves[i].tbScore : v;
+
+        if (!isTBScore)
+            v = worker.remove_trade_bias(
+              v, usePreviousScore ? rootMoves[i].previousPV : rootMoves[i].pv);
 
         // Potentially correct and extend the PV, and in exceptional cases v.
         // Previous PVs have already been extended. Inexact flags indicate an unreliable PV.

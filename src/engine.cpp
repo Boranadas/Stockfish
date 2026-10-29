@@ -120,6 +120,8 @@ Engine::Engine(std::optional<std::filesystem::path> path) :
 
     options.add("UCI_ShowWDL", Option(false));
 
+    options.add("TradeBias", Option(0, -1000, 1000));
+
     options.add(  //
       "SyzygyPath", Option("", [](const Option& o) {
           Tablebases::init(o);
@@ -153,6 +155,18 @@ Engine::perft(const std::string& fen, Depth depth, bool isChess960) {
 void Engine::go(Search::LimitsType& limits) {
     assert(limits.perft == 0);
     verify_network();
+
+    const int tradeBias = int(options["TradeBias"]);
+    const u64 context   = tradeBias ? pos.material_key() ^ (u64(tradeBias + 1000) << 1)
+                                      ^ u64(pos.side_to_move()) ^ 0x9E3779B97F4A7C15ULL
+                                    : 0;
+    if (context != tradeBiasContext)
+    {
+        wait_for_search_finished();
+        tt.clear(threads);
+        threads.clear();
+        tradeBiasContext = context;
+    }
 
     threads.start_thinking(options, pos, states, limits);
 }

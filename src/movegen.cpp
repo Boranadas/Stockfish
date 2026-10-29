@@ -279,8 +279,10 @@ Move* generate<LEGAL>(const Position& pos, Move* moveList) {
     moveList =
       pos.checkers() ? generate<EVASIONS>(pos, moveList) : generate<NON_EVASIONS>(pos, moveList);
     while (cur != moveList)
-        if (((pinned & cur->from_sq()) || cur->from_sq() == ksq || cur->type_of() == EN_PASSANT)
-            && !pos.legal(*cur))
+        if ((pos.piece_on(cur->to_sq()) == make_piece(~us, KING))
+            || (((pinned & cur->from_sq()) || cur->from_sq() == ksq
+                 || cur->type_of() == EN_PASSANT)
+                && !pos.legal(*cur)))
             *cur = *(--moveList);
         else
             ++cur;

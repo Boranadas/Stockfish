@@ -123,6 +123,7 @@ class Engine {
     NumaReplicationContext numaContext;
 
     Position     pos;
+    u64          tradeBiasContext = 0;
     StateListPtr states;
 
     OptionsMap                                        options;

@@ -257,8 +257,8 @@ Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
                 return PositionSetError(std::string("Invalid FEN. Invalid piece: ")
                                         + std::string(1, token));
 
-            if (++numPieces > 32)
-                return PositionSetError("Invalid FEN. More than 32 pieces on the board.");
+            if (++numPieces > 64)
+                return PositionSetError("Invalid FEN. More than 64 pieces on the board.");
 
             const Square sq = make_square(File(file), Rank(rank));
             put_piece(Piece(idx), sq);
@@ -270,24 +270,8 @@ Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
     if (rank != RANK_1 || file != FILE_NB)
         return PositionSetError("Invalid FEN. Board state encoding ended but cursor not at end.");
 
-    if (pieces(PAWN) & (Rank1BB | Rank8BB))
-        return PositionSetError("Unsupported position. Pawns on the first or eighth rank.");
-
     if (count<KING>(WHITE) != 1 || count<KING>(BLACK) != 1)
         return PositionSetError("Unsupported position. Incorrect number of kings.");
-
-    for (Color c : {WHITE, BLACK})
-    {
-        if (count<PAWN>(c) > 8)
-            return PositionSetError(std::string("Unsupported position. ")
-                                    + (c == WHITE ? "WHITE" : "BLACK") + " has more than 8 pawns.");
-
-        int additional = std::max(count<KNIGHT>(c) - 2, 0) + std::max(count<BISHOP>(c) - 2, 0)
-                       + std::max(count<ROOK>(c) - 2, 0) + std::max(count<QUEEN>(c) - 1, 0);
-        if (additional > 8 - count<PAWN>(c))
-            return PositionSetError(std::string("Unsupported position. Too many pieces for ")
-                                    + (c == WHITE ? "WHITE." : "BLACK."));
-    }
 
     // 2. Active color
     if (!(ss >> token))
@@ -435,8 +419,6 @@ Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
     chess960 = isChess960;
     set_state();
 
-    if (attackers_to_exist(square<KING>(~sideToMove), pieces(), sideToMove))
-        return PositionSetError("Unsupported position. King can be captured.");
 
     assert(pos_is_ok());
 
@@ -491,6 +473,8 @@ void Position::set_state() const {
     st->nonPawnKey[WHITE] = st->nonPawnKey[BLACK] = 0;
     st->pawnKey                                   = Zobrist::noPawns;
     st->nonPawnMaterial[WHITE] = st->nonPawnMaterial[BLACK] = VALUE_ZERO;
+    st->offturnKingInCheck =
+      bool(attackers_to(square<KING>(~sideToMove)) & pieces(sideToMove));
     st->checkersBB = attackers_to(square<KING>(sideToMove)) & pieces(~sideToMove);
 
     set_check_info();
@@ -532,7 +516,7 @@ Key Position::compute_material_key() const {
     Key k = 0;
     for (Piece pc : Pieces)
         for (int cnt = 0; cnt < pieceCount[pc]; ++cnt)
-            k ^= Zobrist::psq[pc][8 + cnt];
+            k ^= Zobrist::psq[pc][(8 + cnt) & 63];
     return k;
 }
 
@@ -667,6 +651,9 @@ bool Position::legal(Move m) const {
     Square from = m.from_sq();
     Square to   = m.to_sq();
 
+    if (m.type_of() != CASTLING && piece_on(to) == make_piece(~us, KING))
+        return false;
+
     assert(color_of(moved_piece(m)) == us);
     assert(piece_on(square<KING>(us)) == make_piece(us, KING));
 
@@ -708,6 +695,9 @@ bool Position::pseudo_legal(const Move m) const {
     Square from = m.from_sq();
     Square to   = m.to_sq();
     Piece  pc   = moved_piece(m);
+
+    if (m.type_of() != CASTLING && piece_on(to) == make_piece(~us, KING))
+        return false;
 
     // Use a slower but simpler function for uncommon cases
     // yet we skip the legality check of MoveList<LEGAL>().
@@ -818,8 +808,9 @@ void Position::do_move(Move                      m,
                        StateInfo&                newSt,
                        bool                      givesCheck,
                        Dirties&                  dirties,
-                       const TranspositionTable* tt      = nullptr,
-                       const SharedHistories*    history = nullptr) {
+                       const TranspositionTable* tt,
+                       const SharedHistories*    history,
+                       bool                      recomputeCheckers) {
 
     assert(m.is_ok());
     assert(&newSt != st);
@@ -843,8 +834,8 @@ void Position::do_move(Move                      m,
     auto& dts  = dirties.dirtyThreats;
     auto& dp   = dirties.dirtyPiece;
 
-    dpps.before[WHITE] = pieces(WHITE, PAWN);
-    dpps.before[BLACK] = pieces(BLACK, PAWN);
+    dpps.before[WHITE] = pieces(WHITE, PAWN) & ~(Rank1BB | Rank8BB);
+    dpps.before[BLACK] = pieces(BLACK, PAWN) & ~(Rank1BB | Rank8BB);
 
     Color  us       = sideToMove;
     Color  them     = ~us;
@@ -912,7 +903,7 @@ void Position::do_move(Move                      m,
 
         k ^= Zobrist::psq[captured][capsq];
         st->materialKey ^=
-          Zobrist::psq[captured][8 + pieceCount[captured] - (m.type_of() != EN_PASSANT)];
+          Zobrist::psq[captured][(8 + pieceCount[captured] - (m.type_of() != EN_PASSANT)) & 63];
 
         // Reset rule 50 counter
         st->rule50 = 0;
@@ -978,8 +969,8 @@ void Position::do_move(Move                      m,
             // Update hash keys
             // Zobrist::psq[pc][to] is zero, so we don't need to clear it
             k ^= Zobrist::psq[promotion][to];
-            st->materialKey ^= Zobrist::psq[promotion][8 + pieceCount[promotion]]
-                             ^ Zobrist::psq[pc][8 + pieceCount[pc] - 1];
+            st->materialKey ^= Zobrist::psq[promotion][(8 + pieceCount[promotion]) & 63]
+                             ^ Zobrist::psq[pc][(8 + pieceCount[pc] - 1) & 63];
             st->nonPawnKey[us] ^= Zobrist::psq[promotion][to];
 
             if (pt <= BISHOP)
@@ -1042,10 +1033,18 @@ void Position::do_move(Move                      m,
     // Set capture piece
     st->capturedPiece = captured;
 
-    // Calculate checkers bitboard (if move gives check)
-    st->checkersBB = givesCheck ? attackers_to(square<KING>(them)) & pieces(us) : 0;
+    st->checkersBB = givesCheck || recomputeCheckers || st->offturnKingInCheck
+                     ? attackers_to(square<KING>(them)) & pieces(us)
+                     : 0;
+#ifndef NDEBUG
+    assert(st->checkersBB == (attackers_to(square<KING>(them)) & pieces(us)));
+#endif
 
     sideToMove = ~sideToMove;
+
+#ifndef NDEBUG
+    assert(!(attackers_to(square<KING>(us)) & pieces(them)));
+#endif
 
     // Update king attacks used for fast check detection
     set_check_info();
@@ -1071,8 +1070,8 @@ void Position::do_move(Move                      m,
 
     assert(pos_is_ok());
 
-    dpps.after[WHITE] = pieces(WHITE, PAWN);
-    dpps.after[BLACK] = pieces(BLACK, PAWN);
+    dpps.after[WHITE] = pieces(WHITE, PAWN) & ~(Rank1BB | Rank8BB);
+    dpps.after[BLACK] = pieces(BLACK, PAWN) & ~(Rank1BB | Rank8BB);
 
     assert(dp.pc != NO_PIECE);
     assert(!(bool(captured) || m.type_of() == CASTLING) ^ (dp.remove_sq != SQ_NONE));
@@ -1616,12 +1615,8 @@ bool Position::pos_is_ok() const {
         || (ep_square() != SQ_NONE && relative_rank(sideToMove, ep_square()) != RANK_6))
         assert(0 && "pos_is_ok: Default");
 
-    if (count<KING>(WHITE) != 1 || count<KING>(BLACK) != 1
-        || attackers_to_exist(square<KING>(~sideToMove), pieces(), sideToMove))
+    if (count<KING>(WHITE) != 1 || count<KING>(BLACK) != 1)
         assert(0 && "pos_is_ok: Kings");
-
-    if ((pieces(PAWN) & (Rank1BB | Rank8BB)) || count<PAWN>(WHITE) > 8 || count<PAWN>(BLACK) > 8)
-        assert(0 && "pos_is_ok: Pawns");
 
 
     if (ep_square() != SQ_NONE)
@@ -1640,8 +1635,7 @@ bool Position::pos_is_ok() const {
             assert(0 && "pos_is_ok: En passant square");
     }
 
-    if ((pieces(WHITE) & pieces(BLACK)) || (pieces(WHITE) | pieces(BLACK)) != pieces()
-        || popcount(pieces(WHITE)) > 16 || popcount(pieces(BLACK)) > 16)
+    if ((pieces(WHITE) & pieces(BLACK)) || (pieces(WHITE) | pieces(BLACK)) != pieces())
         assert(0 && "pos_is_ok: Bitboards");
 
     for (PieceType p1 = PAWN; p1 <= KING; ++p1)

@@ -55,10 +55,17 @@ Thread::Thread(Search::SharedState&                    sharedState,
     idx(n),
     idxInNuma(numaN),
     totalNuma(totalNumaCount),
-    nthreads(sharedState.options["Threads"]),
+    nthreads(sharedState.options["Threads"])
+#ifndef NO_NATIVE_THREADS
+    ,
     stdThread(
-      create_native_thread(NativeThreadOptions{}.setLargeStack(true), &Thread::idle_loop, this)) {
+      create_native_thread(NativeThreadOptions{}.setLargeStack(true), &Thread::idle_loop, this))
+#endif
+{
 
+#ifdef NO_NATIVE_THREADS
+    searching = false;
+#else
     if (!stdThread.joinable())
     {
         std::cerr << "Failed to create search thread\n";
@@ -66,6 +73,7 @@ Thread::Thread(Search::SharedState&                    sharedState,
     }
 
     wait_for_search_finished();
+#endif
 
     run_custom_job([this, &binder, &sharedState, &sm, n]() {
         // Use the binder to [maybe] bind the threads to a NUMA node before doing
@@ -86,9 +94,11 @@ Thread::~Thread() {
 
     assert(!searching);
 
+#ifndef NO_NATIVE_THREADS
     exit = true;
     start_searching();
     stdThread.join();
+#endif
 }
 
 // Wakes up the thread that will start the search
@@ -112,6 +122,10 @@ void Thread::wait_for_search_finished() {
 
 // Launching a function in the thread
 void Thread::run_custom_job(std::function<void()> f) {
+#ifdef NO_NATIVE_THREADS
+    f();
+    return;
+#endif
     {
         std::unique_lock<std::mutex> lk(mutex);
         cv.wait(lk, [&] { return !searching; });
@@ -170,7 +184,11 @@ void ThreadPool::set(const NumaConfig&                           numaConfig,
         boundThreadToNumaNode.clear();
     }
 
+#ifdef NO_NATIVE_THREADS
+    const usize requested = 1;
+#else
     const usize requested = sharedState.options["Threads"];
+#endif
 
     if (requested > 0)  // create new thread(s)
     {

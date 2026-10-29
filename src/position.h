@@ -54,6 +54,7 @@ struct StateInfo {
     int    rule50;
     int    pliesFromNull;
     Square epSquare;
+    bool   offturnKingInCheck;
 
     // Not copied when making a move (will be recomputed anyhow)
     Key        key;
@@ -149,7 +150,8 @@ class Position {
                  bool                      givesCheck,
                  Dirties&                  dirties,
                  const TranspositionTable* tt,
-                 const SharedHistories*    worker);
+                 const SharedHistories*    worker,
+                 bool                      recomputeCheckers);
     void undo_move(Move m);
     void do_null_move(StateInfo& newSt);
     void undo_null_move();
@@ -437,7 +439,7 @@ inline void Position::swap_piece(Square s, Piece pc, DirtyThreats* const dts) {
 inline void Position::do_move(Move m, StateInfo& newSt, const TranspositionTable* tt = nullptr) {
     new (&scratchDirties.dirtyThreats) DirtyThreats;
     new (&scratchDirties.dirtyPawnPairs) DirtyPawnPairs;
-    do_move(m, newSt, gives_check(m), scratchDirties, tt, nullptr);
+    do_move(m, newSt, gives_check(m), scratchDirties, tt, nullptr, false);
 }
 
 inline StateInfo* Position::state() const { return st; }

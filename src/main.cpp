@@ -26,7 +26,17 @@
 #include "tune.h"
 #include "uci.h"
 
+#ifdef NO_NATIVE_THREADS
+    #include <emscripten/emscripten.h>
+#endif
+
 using namespace Stockfish;
+
+#ifdef NO_NATIVE_THREADS
+static std::unique_ptr<UCIEngine> webUci;
+
+extern "C" EMSCRIPTEN_KEEPALIVE void uci_command(const char* cmd) { webUci->execute(cmd); }
+#endif
 
 #ifdef UNIVERSAL_BINARY
 namespace Stockfish {
@@ -46,6 +56,11 @@ int main(int argc, char* argv[]) {
     auto uci = std::make_unique<UCIEngine>(std::move(cli));
 
     Tune::init(uci->engine_options());
+
+#ifdef NO_NATIVE_THREADS
+    webUci = std::move(uci);
+    return 0;
+#endif
 
     uci->loop();
 

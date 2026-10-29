@@ -160,7 +160,7 @@ ifeq ($(ARCH), $(filter $(ARCH), \
                  x86-64-bmi2 x86-64-avx2 x86-64-sse41-popcnt x86-64-modern x86-64-ssse3 x86-64-sse3-popcnt \
                  x86-64 x86-32-sse41-popcnt x86-32-sse2 x86-32 ppc-64 ppc-64-altivec ppc-64-vsx ppc-32 e2k \
                  armv7 armv7-neon armv8 armv8-dotprod arm64-universal apple-silicon general-64 general-32 riscv64 \
-                 riscv64-rva23 riscv64-universal loongarch64 loongarch64-lsx loongarch64-lasx wasm32 wasm32-relaxed-simd))
+                 riscv64-rva23 riscv64-universal loongarch64 loongarch64-lsx loongarch64-lasx wasm32 wasm32-relaxed-simd wasm32-single))
    SUPPORTED_ARCH=true
 else
    SUPPORTED_ARCH=false
@@ -412,6 +412,16 @@ ifeq ($(ARCH),wasm32)
 	ssse3 = yes
 	sse41 = yes
 	syzygy = no
+endif
+
+ifeq ($(ARCH),wasm32-single)
+	arch = wasm32
+	sse = yes
+	sse2 = yes
+	ssse3 = yes
+	sse41 = yes
+	syzygy = no
+	wasm_threads = no
 endif
 
 ifeq ($(ARCH),wasm32-relaxed-simd)
@@ -888,8 +898,17 @@ ifeq ($(lsx),yes)
 endif
 
 ifeq ($(arch),wasm32)
-	CXXFLAGS += -pthread -msimd128 -DUSE_POPCNT -DNNUE_EMBEDDING_OFF -DUSE_SLOPPY_ATOMICS
-	LDFLAGS += -pthread -sINITIAL_MEMORY=64MB -sALLOW_MEMORY_GROWTH -sSTACK_SIZE=3MB
+	CXXFLAGS += -msimd128 -DUSE_POPCNT -DNNUE_EMBEDDING_OFF -DUSE_SLOPPY_ATOMICS
+	LDFLAGS += -sINITIAL_MEMORY=64MB -sALLOW_MEMORY_GROWTH -sSTACK_SIZE=3MB
+	ifeq ($(wasm_threads),no)
+		LDFLAGS += -sMODULARIZE -sEXPORT_NAME=Stockfish -sENVIRONMENT=worker,node -sINVOKE_RUN=0 \
+		           -sEXIT_RUNTIME=0 -sEXPORTED_FUNCTIONS=_main,_uci_command \
+		           -sEXPORTED_RUNTIME_METHODS=FS,callMain,ccall \
+		           -sINCOMING_MODULE_JS_API=wasmBinary,print,printErr
+	else
+		CXXFLAGS += -pthread
+		LDFLAGS += -pthread
+	endif
 	ifeq ($(relaxedsimd),yes)
 		CXXFLAGS += -mrelaxed-simd
 	endif

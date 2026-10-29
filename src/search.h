@@ -359,8 +359,12 @@ class Worker {
     bool iterative_deepening();
 
     void do_move(Position& pos, const Move move, StateInfo& st, Stack* const ss);
-    void
-    do_move(Position& pos, const Move move, StateInfo& st, const bool givesCheck, Stack* const ss);
+    void do_move(Position&    pos,
+                 const Move   move,
+                 StateInfo&   st,
+                 const bool   givesCheck,
+                 Stack* const ss,
+                 bool         recomputeCheckers = false);
     void do_null_move(Position& pos, StateInfo& st, Stack* const ss);
     void undo_move(Position& pos, const Move move);
     void undo_null_move(Position& pos);
@@ -385,6 +389,9 @@ class Worker {
     TimePoint elapsed() const;
 
     Value evaluate(const Position&);
+    int   trade_bonus(const Position& pos) const;
+    static void trade_class_counts(const Position& pos, Color c, int counts[4]);
+    Value remove_trade_bias(Value v, const std::vector<Move>& pv);
 
     LimitsType limits;
 
@@ -393,6 +400,10 @@ class Worker {
     int                selDepth, nmpMinPly;
 
     Value optimism[COLOR_NB];
+
+    int   tradeBias;
+    Color tradeBiasColor;
+    int   tradeBiasRootCounts[COLOR_NB][4];
 
     Position  rootPos;
     StateInfo rootState;

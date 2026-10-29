@@ -93,7 +93,7 @@ void UCIEngine::init_search_update_listeners() {
 
 void UCIEngine::loop() {
     set_console_utf8();
-    std::string token, cmd;
+    std::string cmd;
 
     for (int i = 1; i < cli.argc; ++i)
         cmd += std::string(cli.argv[i]) + " ";
@@ -103,89 +103,93 @@ void UCIEngine::loop() {
         if (cli.argc == 1
             && !getline(std::cin, cmd))  // Wait for an input or an end-of-file (EOF) indication
             cmd = "quit";
+    } while (execute(cmd) && cli.argc <= 1);  // The command-line arguments are one-shot
+}
 
-        currentCmd = cmd;
-        std::istringstream is(cmd);
+bool UCIEngine::execute(const std::string& cmd) {
+    std::string token;
 
-        token.clear();  // Avoid a stale if getline() returns nothing or a blank line
-        is >> token;
+    currentCmd = cmd;
+    std::istringstream is(cmd);
 
-        if (token == "quit" || token == "stop")
-            engine.stop();
+    is >> token;
 
-        // The GUI sends 'ponderhit' to tell that the user has played the expected move.
-        // So, 'ponderhit' is sent if pondering was done on the same move that the user
-        // has played. The search should continue, but should also switch from pondering
-        // to the normal search.
-        else if (token == "ponderhit")
-            engine.set_ponderhit(false);
+    if (token == "quit" || token == "stop")
+        engine.stop();
 
-        else if (token == "uci")
+    // The GUI sends 'ponderhit' to tell that the user has played the expected move.
+    // So, 'ponderhit' is sent if pondering was done on the same move that the user
+    // has played. The search should continue, but should also switch from pondering
+    // to the normal search.
+    else if (token == "ponderhit")
+        engine.set_ponderhit(false);
+
+    else if (token == "uci")
+    {
+        sync_cout << "id name " << engine_info(true) << "\n"
+                  << engine.get_options() << sync_endl;
+
+        sync_cout << "uciok" << sync_endl;
+    }
+
+    else if (token == "setoption")
+        setoption(is);
+    else if (token == "go")
+    {
+        // send info strings after the go command is sent for old GUIs and python-chess
+        print_info_string(engine.numa_config_information_as_string());
+        print_info_string(engine.thread_allocation_information_as_string());
+        go(is);
+    }
+    else if (token == "position")
+        position(is);
+    else if (token == "ucinewgame")
+        engine.search_clear();
+    else if (token == "isready")
+        sync_cout << "readyok" << sync_endl;
+
+    // Add custom non-UCI commands, mainly for debugging purposes.
+    else if (token == "flip")
+    {
+        if (auto err = engine.flip())
         {
-            sync_cout << "id name " << engine_info(true) << "\n"
-                      << engine.get_options() << sync_endl;
-
-            sync_cout << "uciok" << sync_endl;
+            terminate_on_critical_error(err->what());
         }
+    }
+    else if (token == "bench")
+        bench(is);
+    else if (token == BenchmarkCommand)
+        benchmark(is);
+    else if (token == "d")
+        sync_cout << engine.visualize() << sync_endl;
+    else if (token == "eval")
+        engine.trace_eval();
+    else if (token == "compiler")
+        sync_cout << compiler_info() << sync_endl;
+    else if (token == "export_net")
+    {
+        std::optional<std::filesystem::path> file;
+        std::string                          filename;
 
-        else if (token == "setoption")
-            setoption(is);
-        else if (token == "go")
-        {
-            // send info strings after the go command is sent for old GUIs and python-chess
-            print_info_string(engine.numa_config_information_as_string());
-            print_info_string(engine.thread_allocation_information_as_string());
-            go(is);
-        }
-        else if (token == "position")
-            position(is);
-        else if (token == "ucinewgame")
-            engine.search_clear();
-        else if (token == "isready")
-            sync_cout << "readyok" << sync_endl;
+        if (is >> filename)
+            file = path_from_utf8(filename);
 
-        // Add custom non-UCI commands, mainly for debugging purposes.
-        else if (token == "flip")
-        {
-            if (auto err = engine.flip())
-            {
-                terminate_on_critical_error(err->what());
-            }
-        }
-        else if (token == "bench")
-            bench(is);
-        else if (token == BenchmarkCommand)
-            benchmark(is);
-        else if (token == "d")
-            sync_cout << engine.visualize() << sync_endl;
-        else if (token == "eval")
-            engine.trace_eval();
-        else if (token == "compiler")
-            sync_cout << compiler_info() << sync_endl;
-        else if (token == "export_net")
-        {
-            std::optional<std::filesystem::path> file;
-            std::string                          filename;
-
-            if (is >> filename)
-                file = path_from_utf8(filename);
-
-            engine.save_network(file);
-        }
-        else if (token == "--help" || token == "help" || token == "--license" || token == "license")
-            sync_cout
-              << "\nStockfish is a powerful chess engine for playing and analyzing."
-                 "\nIt is released as free software licensed under the GNU GPLv3 License."
-                 "\nStockfish is normally used with a graphical user interface (GUI) and implements"
-                 "\nthe Universal Chess Interface (UCI) protocol to communicate with a GUI, an API, etc."
-                 "\nFor any further information, visit https://github.com/official-stockfish/Stockfish#readme"
-                 "\nor read the corresponding README.md and Copying.txt files distributed along with this program.\n"
-              << sync_endl;
-        else if (!token.empty() && token[0] != '#')
+        engine.save_network(file);
+    }
+    else if (token == "--help" || token == "help" || token == "--license" || token == "license")
+        sync_cout
+          << "\nStockfish is a powerful chess engine for playing and analyzing."
+             "\nIt is released as free software licensed under the GNU GPLv3 License."
+             "\nStockfish is normally used with a graphical user interface (GUI) and implements"
+             "\nthe Universal Chess Interface (UCI) protocol to communicate with a GUI, an API, etc."
+             "\nFor any further information, visit https://github.com/official-stockfish/Stockfish#readme"
+             "\nor read the corresponding README.md and Copying.txt files distributed along with this program.\n"
+          << sync_endl;
+    else if (!token.empty() && token[0] != '#')
             sync_cout << "Unknown command: '" << cmd << "'. Type help for more information."
                       << sync_endl;
 
-    } while (token != "quit" && cli.argc <= 1);  // The command-line arguments are one-shot
+    return token != "quit";
 }
 
 Search::LimitsType UCIEngine::parse_limits(std::istream& is) {

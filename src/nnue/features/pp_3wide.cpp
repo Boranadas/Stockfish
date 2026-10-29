@@ -68,8 +68,8 @@ sf_always_inline IndexType PP_3Wide::make_index(
 
 void PP_3Wide::append_active_indices(Color perspective, const Position& pos, IndexList& active) {
     const Square   ksq   = pos.square<KING>(perspective);
-    const Bitboard white = pos.pieces(WHITE, PAWN);
-    const Bitboard black = pos.pieces(BLACK, PAWN);
+    const Bitboard white = pos.pieces(WHITE, PAWN) & ~(Rank1BB | Rank8BB);
+    const Bitboard black = pos.pieces(BLACK, PAWN) & ~(Rank1BB | Rank8BB);
 
     Bitboard bb = white;
     while (bb)
